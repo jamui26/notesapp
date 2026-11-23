@@ -1,28 +1,32 @@
-# NoteNest – Backend + New Frontend
+# NoteNest – Frontend and Backend
 
 ## What is included
-- `noteapp/` is your existing Express + MongoDB backend (kept as provided).
-- `frontend/` is a redesigned, responsive React + Vite frontend.
-- Frontend uses the existing backend endpoints only: `POST /user/register`, `POST /user/login`, and `GET /dashboard`.
+- `../noteapp/` is the Express + MongoDB backend.
+- `frontend/` is the React + Vite frontend.
+- The frontend uses the backend for account registration/login and per-user note create, list, update, and delete operations.
 
 ## Run it (two terminals in VS Code)
+
+Run the backend and frontend in two terminals, starting both commands from the repository root.
 
 ### 1. Start the backend
 ```bash
 cd noteapp
+copy .env.example .env
 npm install
 npm run server
 ```
-Make sure MongoDB is configured in `noteapp/db.js` and the database is running/reachable. Backend runs on `http://localhost:8080`.
+
+Set `MONGODB_URI` in `noteapp/.env` to your local MongoDB or Atlas connection string. Replace `JWT_SECRET` with a long random value. The backend runs on `http://localhost:8080`.
 
 ### 2. Start the frontend
 Open a second terminal:
 ```bash
-cd frontend
+cd fronted\frontend
+copy .env.example .env
 npm install
 npm run dev
 ```
 Open the local URL Vite prints (usually `http://localhost:5173`).
 
-## Important
-This backend currently supports registration, login and a protected dashboard response. It does **not** contain note create/edit/delete APIs, so the frontend intentionally does not pretend to save notes. The dashboard explains that the account is connected. To add real notes later, note CRUD routes and a Note model will need to be added to the backend.
+If the backend is hosted elsewhere, set `VITE_API_URL` in `frontend/.env` to its URL and set `FRONTEND_URL` in `noteapp/.env` to the frontend's origin.

@@ -4,11 +4,20 @@ const auth = (req, res, next) => {
 
   try {
     const token = req.headers.authorization;
-    console.log(token);
-    const decoded = jwt.verify(token, "coding");
+    if (!token) {
+      return res.status(401).send({ msg: "Login First" });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "coding");
+    req.userId = decoded.userId;
+
+    if (!req.userId) {
+      return res.status(401).send({ msg: "Login First" });
+    }
+
     next();
   } catch (error) {
-    res.send({ msg: "login First" });
+    return res.status(401).send({ msg: "Login First" });
   }
 };
 

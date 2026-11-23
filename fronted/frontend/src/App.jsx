@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import "./App.css";
 
-const API = "http://localhost:8080";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 function App() {
   const [page, setPage] = useState("login");
@@ -22,20 +22,153 @@ function App() {
   const [editingId, setEditingId] = useState(null);
   const [noteMessage, setNoteMessage] = useState("");
   const [noteLoading, setNoteLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Get all notes
-  const fetchNotes = async () => {
+  // Search and pinned notes (saved separately for each logged-in account)
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showPinnedOnly, setShowPinnedOnly] = useState(false);
+  const [pinnedNotes, setPinnedNotes] = useState([]);
+  const [sortOrder, setSortOrder] = useState("newest");
+
+  // Get the latest notes from the backend
+  const fetchNotes = async (showRefreshMessage = false) => {
+    if (!token) {
+      setNoteMessage("Please log in again to refresh your notes.");
+      return;
+    }
+
+    if (showRefreshMessage) setRefreshing(true);
+
     try {
       const response = await axios.get(`${API}/notes/`, {
         headers: { Authorization: token }
       });
 
-      setNotes(response.data.notes || []);
+      const latestNotes = Array.isArray(response.data?.notes)
+        ? response.data.notes
+        : [];
+      setNotes(latestNotes);
+      if (showRefreshMessage) setNoteMessage("Notes refreshed successfully!");
     } catch (error) {
+      console.error("Refresh notes error:", error);
       setNoteMessage(
-        error.response?.data?.msg || "Unable to load notes."
+        error.response?.data?.msg ||
+        `Unable to refresh notes (${error.response?.status || "network error"}).`
       );
+    } finally {
+      if (showRefreshMessage) setRefreshing(false);
     }
+  };
+
+  // Load saved pinned-note IDs for the current account
+  useEffect(() => {
+    if (!token) {
+      setPinnedNotes([]);
+      return;
+    }
+
+    try {
+      const savedPins = JSON.parse(
+        localStorage.getItem(`notenest-pinned-${token}`) || "[]"
+      );
+      setPinnedNotes(Array.isArray(savedPins) ? savedPins : []);
+    } catch {
+      setPinnedNotes([]);
+    }
+  }, [token]);
+
+  const togglePin = (noteId) => {
+    const id = String(noteId);
+    setPinnedNotes((current) => {
+      const next = current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id];
+
+      localStorage.setItem(`notenest-pinned-${token}`, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const filteredNotes = notes
+    .filter((note) => {
+      const query = searchTerm.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        note.title?.toLowerCase().includes(query) ||
+        note.description?.toLowerCase().includes(query);
+      const matchesPinned =
+        !showPinnedOnly || pinnedNotes.includes(String(note._id));
+
+      return matchesSearch && matchesPinned;
+    })
+    .sort((a, b) => {
+      const aPinned = pinnedNotes.includes(String(a._id));
+      const bPinned = pinnedNotes.includes(String(b._id));
+      const pinOrder = Number(bPinned) - Number(aPinned);
+      if (pinOrder !== 0) return pinOrder;
+      if (sortOrder === "az") return (a.title || "").localeCompare(b.title || "");
+      if (sortOrder === "oldest") return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+
+  // Download a backup of the user's notes as a text file
+  const exportNotes = () => {
+    if (!notes.length) { setNoteMessage("Create a note first, then you can export it!"); return; }
+    const content = notes.map((note, index) => `${index + 1}. ${note.title}\n${note.description}\n\n------------------------------\n`).join("\n");
+    const file = new Blob([`NoteNest - My Notes\n\n${content}`], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "notenest-my-notes.txt";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Copy a note to the clipboard, with a fallback for browser restrictions
+  const copyNote = async (note) => {
+    const content = `${note.title || "Untitled note"}\n\n${note.description || ""}`;
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(content);
+        setNoteMessage("Note copied successfully!");
+        return;
+      }
+    } catch (error) {
+      console.warn("Clipboard API unavailable; trying fallback.", error);
+    }
+
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = content;
+      textArea.setAttribute("readonly", "");
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textArea);
+      setNoteMessage(
+        copied
+          ? "Note copied successfully!"
+          : "Browser blocked copying. Please allow clipboard access."
+      );
+    } catch (error) {
+      console.error("Copy note error:", error);
+      setNoteMessage("Unable to copy this note.");
+    }
+  };
+
+  // Format the note creation date safely
+  const formatNoteDate = (date) => {
+    if (!date) return "Date not available";
+    const parsedDate = new Date(date);
+    if (Number.isNaN(parsedDate.getTime())) return "Date not available";
+    return parsedDate.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric"
+    });
   };
 
   // Load dashboard and notes after login
@@ -215,6 +348,9 @@ function App() {
     setTitle("");
     setDescription("");
     setNotes([]);
+    setSearchTerm("");
+    setShowPinnedOnly(false);
+    setPinnedNotes([]);
     setEditingId(null);
     setMessage("");
     setNoteMessage("");
@@ -252,12 +388,28 @@ function App() {
           <div className="welcome-card">
             <div className="card-orb">✳</div>
 
-            <div>
+            <div className="welcome-copy">
               <p className="card-label">YOU’RE SIGNED IN</p>
               <h2>{userMessage || "Your space is ready."}</h2>
               <p>
                 Your personal notes are saved securely in your account.
               </p>
+            </div>
+            <div className="welcome-decoration" aria-hidden="true">✦</div>
+          </div>
+
+          <div className="stats-row">
+            <div className="stat-card">
+              <span className="stat-icon">▤</span>
+              <div className="stat-number-group"><strong>{notes.length}</strong><span>Total notes</span></div>
+            </div>
+            <div className="stat-card">
+              <span className="stat-icon">★</span>
+              <div className="stat-number-group"><strong>{pinnedNotes.filter((id) => notes.some((note) => String(note._id) === id)).length}</strong><span>Pinned notes</span></div>
+            </div>
+            <div className="stat-card">
+              <span className="stat-icon">⌕</span>
+              <div className="stat-number-group"><strong>{filteredNotes.length}</strong><span>Showing</span></div>
             </div>
           </div>
 
@@ -265,7 +417,7 @@ function App() {
           <section className="notes-section">
             <div className="notes-heading">
               <div>
-                <p className="card-label">YOUR THOUGHTS</p>
+                <p className="card-label">YOUR THOUGHTS · LITTLE IDEAS, BIG PLANS</p>
                 <h2>
                   {editingId ? "Edit your note" : "Create a new note"}
                 </h2>
@@ -294,6 +446,7 @@ function App() {
                   maxLength={2000}
                   required
                 />
+                <span className="writing-count">{description.length}/2000 characters · {description.trim() ? description.trim().split(/\s+/).length : 0} words</span>
               </label>
 
               <div className="note-form-actions">
@@ -332,12 +485,71 @@ function App() {
             )}
           </section>
 
-          {/* Display Notes */}
+          {/* Display, search and pin notes */}
           <section className="saved-notes">
             <div className="notes-heading">
               <div>
                 <p className="card-label">YOUR COLLECTION</p>
-                <h2>Your notes ({notes.length})</h2>
+                <h2>Your notes <span className="count-pill">{notes.length}</span></h2>
+              </div>
+              <span className="collection-caption">A home for your ideas</span>
+            </div>
+
+            <div className="notes-toolbar">
+              <div className="search-box">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  type="search"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search your notes..."
+                  aria-label="Search notes"
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    className="clear-search"
+                    onClick={() => setSearchTerm("")}
+                    aria-label="Clear search"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+
+              <div className="toolbar-extra">
+                <select className="sort-select" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} aria-label="Sort notes">
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                  <option value="az">Title A–Z</option>
+                </select>
+                <button
+                  type="button"
+                  className="export-btn"
+                  onClick={() => fetchNotes(true)}
+                  disabled={refreshing}
+                  title="Reload notes from the server"
+                >
+                  {refreshing ? "Refreshing..." : "↻ Refresh"}
+                </button>
+                <button type="button" className="export-btn" onClick={exportNotes}>↓ Export notes</button>
+              </div>
+
+              <div className="filter-tabs">
+                <button
+                  type="button"
+                  className={!showPinnedOnly ? "filter-active" : ""}
+                  onClick={() => setShowPinnedOnly(false)}
+                >
+                  All notes
+                </button>
+                <button
+                  type="button"
+                  className={showPinnedOnly ? "filter-active" : ""}
+                  onClick={() => setShowPinnedOnly(true)}
+                >
+                  ★ Pinned
+                </button>
               </div>
             </div>
 
@@ -347,27 +559,66 @@ function App() {
                 <h3>No notes yet.</h3>
                 <p>Create your first note and it will appear here.</p>
               </div>
+            ) : filteredNotes.length === 0 ? (
+              <div className="empty-notes">
+                <span>⌕</span>
+                <h3>No matching notes</h3>
+                <p>Try another search or switch back to all notes.</p>
+                <button
+                  type="button"
+                  className="empty-action"
+                  onClick={() => {
+                    setSearchTerm("");
+                    setShowPinnedOnly(false);
+                  }}
+                >
+                  Show all notes
+                </button>
+              </div>
             ) : (
               <div className="notes-grid">
-                {notes.map((note) => (
-                  <article className="note-card" key={note._id}>
-                    <h3>{note.title}</h3>
-                    <p>{note.description}</p>
+                {filteredNotes.map((note) => {
+                  const isPinned = pinnedNotes.includes(String(note._id));
 
-                    <div className="note-actions">
-                      <button onClick={() => handleEdit(note)}>
-                        Edit
-                      </button>
+                  return (
+                    <article className={`note-card ${isPinned ? "is-pinned" : ""}`} key={note._id}>
+                      <div className="note-card-top">
+                        <span className="note-type-label">PERSONAL NOTE</span>
+                        <button
+                          type="button"
+                          className={`pin-btn ${isPinned ? "pinned" : ""}`}
+                          onClick={() => togglePin(note._id)}
+                          aria-label={isPinned ? "Unpin note" : "Pin note"}
+                          title={isPinned ? "Unpin note" : "Pin note"}
+                        >
+                          {isPinned ? "★ Pinned" : "☆ Pin"}
+                        </button>
+                      </div>
+                      <h3>{note.title}</h3>
+                      <p>{note.description}</p>
+                      <span className="note-date">
+                        Created: {formatNoteDate(note.createdAt)}
+                      </span>
 
-                      <button
-                        className="delete-btn"
-                        onClick={() => handleDelete(note._id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                      <div className="note-actions">
+                        <button type="button" onClick={() => copyNote(note)}>
+                          ⧉ Copy
+                        </button>
+                        <button type="button" onClick={() => handleEdit(note)}>
+                          ✎ Edit
+                        </button>
+
+                        <button
+                          type="button"
+                          className="delete-btn"
+                          onClick={() => handleDelete(note._id)}
+                        >
+                          × Delete
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>
