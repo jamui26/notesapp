@@ -11,15 +11,30 @@ const app = express();
 
 // CORS Configuration
 const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:5174",
-  "http://localhost:5175",
-  "http://localhost:5176"
-];
+  "https://notesapp-khaki-ten.vercel.app",
+  process.env.FRONTEND_URL
+].filter(Boolean);
 
 app.use(cors({
-  origin: /^http:\/\/localhost:517[0-9]+$/,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  origin: (origin, callback) => {
+    // Allow requests without an origin (such as Postman)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Allow deployed Vercel frontend
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Allow local development
+    if (/^http:\/\/localhost:517[0-9]+$/.test(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
@@ -56,10 +71,10 @@ const startServer = async () => {
 
     console.log("Database connected");
 
-    app.listen(process.env.PORT || 8080, () => {
-      console.log(
-        `Server started on port ${process.env.PORT || 8080}`
-      );
+    const PORT = process.env.PORT || 8080;
+
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server started on port ${PORT}`);
     });
 
   } catch (error) {
